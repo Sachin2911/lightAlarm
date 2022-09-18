@@ -1,11 +1,9 @@
-
-
-// Load Wi-Fi library
+// Libraries
 #include <ESP8266WiFi.h>
-
+#include <WiFiUdp.h>
 // Replace with your network credentials
-const char* ssid     = "REPLACE_WITH_YOUR_SSID";
-const char* password = "REPLACE_WITH_YOUR_PASSWORD";
+const char* ssid     = "ESP32-Access-Point";
+const char* password = "123456789";
 
 // Set web server port number to 80
 WiFiServer server(80);
@@ -15,11 +13,10 @@ String header;
 
 // Auxiliar variables to store the current output state
 String output5State = "off";
-String output4State = "off";
+String alarmState = "off";
 
 // Assign output variables to GPIO pins
-const int output5 = 5;
-const int output4 = 4;
+const int output5 = 16;
 
 // Current time
 unsigned long currentTime = millis();
@@ -28,40 +25,73 @@ unsigned long previousTime = 0;
 // Define timeout time in milliseconds (example: 2000ms = 2s)
 const long timeoutTime = 2000;
 
+unsigned int localPort = 2390;      // local port to listen for UDP packets
+IPAddress timeServerIP; // time.nist.gov NTP server address
+const char* ntpServerName = "time.nist.gov";
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+WiFiUDP udp;
+int satime;
+int relay = 16;
+int alarmtime = 1700;
+
+int short_delay = 1000;
+int medium_delay = 2000;
+int long_delay = 30000;
+
 void setup() {
   Serial.begin(115200);
   // Initialize the output variables as outputs
+  pinMode(LED_BUILTIN, OUTPUT);
   pinMode(output5, OUTPUT);
-  pinMode(output4, OUTPUT);
   // Set outputs to LOW
   digitalWrite(output5, LOW);
-  digitalWrite(output4, LOW);
-
+  digitalWrite(LED_BUILTIN, HIGH);
   // Connect to Wi-Fi network with SSID and password
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  // Print local IP address and start web server
-  Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  // Connect to Wi-Fi network with SSID and password
+  Serial.print("Setting AP (Access Point)…");
+  // Remove the password parameter, if you want the AP (Access Point) to be open
+  WiFi.softAP(ssid, password);
+
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(IP);
+  
   server.begin();
+
+    digitalWrite(relay, HIGH);
+  delay(short_delay);
+  digitalWrite(relay, LOW);
+  delay(short_delay);
+    digitalWrite(relay, HIGH);
+  delay(short_delay);
+  digitalWrite(relay, LOW);
+  delay(short_delay);
+  
+  Serial.println("Starting UDP");
+  udp.begin(localPort);
+  Serial.print("Local port: ");
+  Serial.println(udp.localPort());
 }
 
 void loop(){
+  digitalWrite(LED_BUILTIN, LOW);
   WiFiClient client = server.available();   // Listen for incoming clients
+
+  if(alarmState=="on"){
+    Serial.println("Alarm Activated");
+  }
+
+  if(alarmState=="off"){
+   Serial.println("Alarm Deactivated");
+  }
 
   if (client) {                             // If a new client connects,
     Serial.println("New Client.");          // print a message out in the serial port
     String currentLine = "";                // make a String to hold incoming data from the client
     currentTime = millis();
     previousTime = currentTime;
-    while (client.connected() && currentTime - previousTime <= timeoutTime) { // loop while the client's connected
+    while (client.connected()) { // loop while the client's connected
       currentTime = millis();         
       if (client.available()) {             // if there's bytes to read from the client,
         char c = client.read();             // read a byte, then
@@ -87,14 +117,12 @@ void loop(){
               Serial.println("GPIO 5 off");
               output5State = "off";
               digitalWrite(output5, LOW);
-            } else if (header.indexOf("GET /4/on") >= 0) {
+            } else if (header.indexOf("GET /alarm/on") >= 0) {
               Serial.println("GPIO 4 on");
-              output4State = "on";
-              digitalWrite(output4, HIGH);
-            } else if (header.indexOf("GET /4/off") >= 0) {
+              alarmState = "on";
+            } else if (header.indexOf("GET /alarm/off") >= 0) {
               Serial.println("GPIO 4 off");
-              output4State = "off";
-              digitalWrite(output4, LOW);
+              alarmState = "off";
             }
             
             // Display the HTML web page
@@ -119,15 +147,16 @@ void loop(){
             } else {
               client.println("<p><a href=\"/5/off\"><button class=\"button button2\">OFF</button></a></p>");
             } 
-               
+
             // Display current state, and ON/OFF buttons for GPIO 4  
-            client.println("<p>GPIO 4 - State " + output4State + "</p>");
-            // If the output4State is off, it displays the ON button       
-            if (output4State=="off") {
-              client.println("<p><a href=\"/4/on\"><button class=\"button\">ON</button></a></p>");
+            client.println("<p>Alarm - State " + alarmState + "</p>");
+            // If the alarmState is off, it displays the ON button       
+            if (alarmState=="off") {
+              client.println("<p><a href=\"/alarm/on\"><button class=\"button\">ON</button></a></p>");
             } else {
-              client.println("<p><a href=\"/4/off\"><button class=\"button button2\">OFF</button></a></p>");
+              client.println("<p><a href=\"/alarm/off\"><button class=\"button button2\">OFF</button></a></p>");
             }
+            
             client.println("</body></html>");
             
             // The HTTP response ends with another blank line
